@@ -1,0 +1,21 @@
+{
+  "name": "dsh-acp-paseo-root",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "dsh-acp-paseo monorepo root: dsh (DeepSeek Harness) ⇄ Paseo ACP integration",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "node scripts/build.mjs --no-emit",
+    "test": "node scripts/test.mjs",
+    "install:provider": "node packages/dsh-acp-paseo/scripts/install-paseo-provider.mjs",
+    "smoke": "node tools/acp-smoke-client.mjs"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  },
+  "license": "MIT"
+}

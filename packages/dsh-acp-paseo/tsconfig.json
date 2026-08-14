@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2024"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "outDir": "lib",
+    "rootDir": "src",
+    "declaration": true,
+    "declarationDir": "lib/types",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "noEmitOnError": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"],
+  "exclude": ["tests", "lib", "node_modules"]
+}

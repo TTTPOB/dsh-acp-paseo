@@ -1,0 +1,3 @@
+# 会话创建总是显式传 provider/model
+
+桥创建 agent 时总是显式传入 `{provider, model}`（config 钉住优先，否则 `agentDefaultModel.currentSelection()`），而不是在未配置时传空对象。原因：dsh 的 `resolveChildAgentOptions` 让子代理继承 `parent.options.provider/model`；若父选项为空，子代理的请求路由为空（`buildRequest` 的 `route = {provider: options.provider ?? "", model: options.model ?? ""}`），`agent/request` 瀑布又无人供给（桥的 selection 监听器挂在根 agent ctx 上，而子代理 ctx 从 loop 级 context 创建、不冒泡），子代理的每一个回合都会以 `has no provider/model` 失败——模型侧表现为 `Error: subagent run failed`。web 宿主一直显式传选项（`agentOptions()` 读 `defaultModelSelection()`），故从未触发。修复与 web 语义一致：Paseo 切模型只影响根会话（selection ref），子代理沿用创建时的默认模型。
