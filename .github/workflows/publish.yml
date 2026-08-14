@@ -1,0 +1,54 @@
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Verify version matches tag
+        run: |
+          VERSION=$(node -p "require('./packages/dsh-acp-paseo/package.json').version")
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "manual dispatch — publishing v${VERSION}"
+          elif [ "$GITHUB_REF_NAME" = "v${VERSION}" ]; then
+            echo "tag v${VERSION} matches package version"
+          else
+            echo "tag '${GITHUB_REF_NAME}' does not match package version '${VERSION}'" >&2
+            exit 1
+          fi
+
+      - name: Publish to npm
+        working-directory: packages/dsh-acp-paseo
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
