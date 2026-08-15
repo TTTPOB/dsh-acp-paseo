@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **模型目录自动发现**：Paseo 打开会话即拿到 dsh 当前默认路由的模型目录，无需在 Paseo 配置模型列表；会话内可切模型
+- **模型目录自动发现**：Paseo 打开会话即拿到 dsh 所有已注册路由的模型目录，无需配置模型列表；模型 ID 带 provider 前缀，会话内可跨路由切换
 - **凭据由 dsh 管理**：所选路由的 credential 走 dsh 的凭据链（env → `$DSH_HOME/.credentials.yaml` → `.env`），Paseo 不接触密钥
 - **模式选择**：`execute`（默认）/ `plan`（只读规划），对应 dsh 的 plan mode 布尔开关
 - **思考强度**：`off` / `high` / `max` 选择器，落到 dsh 的 `reasoningEffort`

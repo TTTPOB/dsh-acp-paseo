@@ -11,39 +11,117 @@ import {
   buildModeState,
   buildModelState,
   buildThoughtLevelOption,
+  catalogProviderIds,
+  decodeModelId,
+  encodeModelId,
   isEffortValue,
   isModeId,
+  loadProviderCatalogs,
   modeIdForPlanActive,
-  resolveCatalogProvider,
+  resolveCatalogModel,
   resolveEfforts,
 } from '../src/catalog.ts'
 
-const CATALOG = [
-  { provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' },
-  { provider: 'deepseek-official', id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', description: 'Flagship' },
+const CATALOGS = [
+  {
+    provider: { id: 'klaude-openai', name: 'Klaude OpenAI Gateway' },
+    models: [{ provider: 'klaude-openai', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' }],
+  },
+  {
+    provider: { id: 'opencode-go', name: 'opencode-go' },
+    models: [
+      { provider: 'opencode-go', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
+      { provider: 'opencode-go', id: 'shared/model', name: 'Shared Model', description: 'Qualified' },
+    ],
+  },
 ]
 
-describe('resolveCatalogProvider', () => {
-  it('follows the dsh default route when the bridge is unpinned', () => {
-    expect(resolveCatalogProvider(undefined, 'klaude-openai')).toBe('klaude-openai')
-    expect(resolveCatalogProvider(undefined, 'opencode-go')).toBe('opencode-go')
+describe('ACP model ids', () => {
+  it('round-trips provider and model ids without separator ambiguity', () => {
+    const encoded = encodeModelId('derived/provider', 'shared/model')
+    expect(encoded).toBe('derived%2Fprovider/shared%2Fmodel')
+    expect(decodeModelId(encoded)).toEqual({ provider: 'derived/provider', model: 'shared/model' })
   })
 
-  it('keeps an explicit bridge route pin', () => {
-    expect(resolveCatalogProvider('derived-provider', 'klaude-openai')).toBe('derived-provider')
+  it('rejects malformed or incomplete ids', () => {
+    expect(decodeModelId('unqualified')).toBeUndefined()
+    expect(decodeModelId('provider/')).toBeUndefined()
+    expect(decodeModelId('%ZZ/model')).toBeUndefined()
+  })
+})
+
+describe('catalogProviderIds', () => {
+  const providers = CATALOGS.map((catalog) => catalog.provider)
+
+  it('includes every registered route with the default first', () => {
+    expect(catalogProviderIds(providers, undefined, 'opencode-go')).toEqual(['opencode-go', 'klaude-openai'])
+  })
+
+  it('keeps an explicit bridge route as a single-provider pin', () => {
+    expect(catalogProviderIds(providers, 'derived-provider', 'klaude-openai')).toEqual(['derived-provider'])
+  })
+})
+
+describe('loadProviderCatalogs', () => {
+  it('keeps successful providers when a sibling catalog fails', async () => {
+    const failures: string[] = []
+    const catalogs = await loadProviderCatalogs(
+      CATALOGS.map((catalog) => catalog.provider),
+      (provider) => provider === 'klaude-openai'
+        ? Promise.resolve(CATALOGS[0].models)
+        : Promise.reject(new Error('offline')),
+      (provider) => failures.push(provider),
+    )
+    expect(catalogs).toEqual([CATALOGS[0]])
+    expect(failures).toEqual(['opencode-go'])
+  })
+
+  it('drops empty catalogs without reporting failure', async () => {
+    const failures: string[] = []
+    const catalogs = await loadProviderCatalogs(
+      CATALOGS.map((catalog) => catalog.provider),
+      () => Promise.resolve([]),
+      (provider) => failures.push(provider),
+    )
+    expect(catalogs).toEqual([])
+    expect(failures).toEqual([])
+  })
+})
+
+describe('resolveCatalogModel', () => {
+  it('resolves a qualified model to its exact route', () => {
+    expect(resolveCatalogModel(CATALOGS, 'opencode-go/deepseek-v4-flash')).toEqual({
+      provider: 'opencode-go',
+      model: 'deepseek-v4-flash',
+    })
+  })
+
+  it('accepts an unqualified legacy id only when it is unique', () => {
+    expect(resolveCatalogModel(CATALOGS, 'gpt-5.6-sol')).toEqual({
+      provider: 'klaude-openai',
+      model: 'gpt-5.6-sol',
+    })
+    const duplicate = [...CATALOGS, {
+      provider: { id: 'another', name: 'Another' },
+      models: [{ provider: 'another', id: 'gpt-5.6-sol', name: 'Duplicate' }],
+    }]
+    expect(resolveCatalogModel(duplicate, 'gpt-5.6-sol')).toBeUndefined()
   })
 })
 
 describe('buildModelState', () => {
-  it('maps the dsh catalog to ACP model info', () => {
-    const state = buildModelState(CATALOG, 'deepseek-v4-flash')
-    expect(state.currentModelId).toBe('deepseek-v4-flash')
-    expect(state.availableModels).toHaveLength(2)
-    expect(state.availableModels[0]).toEqual({ modelId: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' })
-    expect(state.availableModels[1]).toEqual({
-      modelId: 'deepseek-v4-pro',
-      name: 'DeepSeek-V4-Pro',
-      description: 'Flagship',
+  it('maps all provider catalogs to qualified ACP model info', () => {
+    const state = buildModelState(CATALOGS, { provider: 'klaude-openai', model: 'gpt-5.6-sol' })
+    expect(state.currentModelId).toBe('klaude-openai/gpt-5.6-sol')
+    expect(state.availableModels).toHaveLength(3)
+    expect(state.availableModels[0]).toEqual({
+      modelId: 'klaude-openai/gpt-5.6-sol',
+      name: 'GPT-5.6 Sol · Klaude OpenAI Gateway',
+    })
+    expect(state.availableModels[2]).toEqual({
+      modelId: 'opencode-go/shared%2Fmodel',
+      name: 'Shared Model · opencode-go',
+      description: 'Qualified',
     })
   })
 })

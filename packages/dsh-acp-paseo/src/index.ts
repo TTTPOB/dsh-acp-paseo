@@ -4,8 +4,8 @@
  * On top of the baseline prompt/cancel transport this bridge exposes the
  * surfaces Paseo auto-discovers from `session/new`:
  *
- *   - the model catalog of the configured route, or the live dsh default
- *     route when unpinned, plus real switching through `session/set_model`,
+ *   - every registered provider's model catalog, or one explicitly pinned
+ *     route, plus cross-provider switching through `session/set_model`,
  *   - two session modes, `execute` and `plan`, mapped onto the dsh plan-mode
  *     boolean and switched through `session/set_mode`,
  *   - a `thought_level` config option (off/high/max) mapped onto the dsh
@@ -52,9 +52,8 @@ import type {
 import type { Stream } from '@agentclientprotocol/sdk'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage, errorChain, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { LlmModelInfo } from '@deepseek-ai/dsh-llm'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import '@deepseek-ai/dsh-user-approval'
 import '@deepseek-ai/dsh-plan-mode'
 import '@deepseek-ai/dsh-commands'
@@ -75,13 +74,17 @@ import {
   buildModeState,
   buildModelState,
   buildThoughtLevelOption,
+  catalogProviderIds,
+  decodeModelId,
+  encodeModelId,
   isEffortValue,
   isModeId,
+  loadProviderCatalogs,
   modeIdForPlanActive,
-  resolveCatalogProvider,
+  resolveCatalogModel,
   resolveEfforts,
 } from './catalog.ts'
-import type { DshEffortInfo } from './catalog.ts'
+import type { DshEffortInfo, DshProviderCatalog, RoutedModelSelection } from './catalog.ts'
 import { buildPermissionToolCall } from './permission.ts'
 import {
   parseToolArguments,
@@ -139,7 +142,7 @@ interface SessionRecord {
   inflight: InflightSlot | undefined
   selection: ModelSelectionRef
   disposeSelection(): void
-  catalogProvider: string
+  catalogs: readonly DshProviderCatalog[]
   efforts: readonly DshEffortInfo[]
   commandAbort: AbortController | undefined
   inFlightTools: Set<string>
@@ -433,7 +436,20 @@ export function apply(ctx: Context, config: BridgeConfig): void {
     }
   }
 
-  /** Resolve the session's effort ladder and default effort from the adapter. */
+  /** Load every selected provider catalog without one route hiding successful siblings. */
+  const loadCatalogs = async (defaultProvider: string): Promise<readonly DshProviderCatalog[]> => {
+    const providerById = new Map(ctx.llm.listProviders().map((provider) => [provider.id, provider]))
+    const providerIds = catalogProviderIds([...providerById.values()], config.provider, defaultProvider)
+    return loadProviderCatalogs(
+      providerIds.map((provider) => providerById.get(provider) ?? { id: provider, name: provider }),
+      provider => ctx.llm.listModels(provider),
+      (provider, error) => {
+        logger.warn(`acp: model catalog discovery failed for ${provider}: ${errorChain(error)}`)
+      },
+    )
+  }
+
+  /** Resolve one model's effort ladder and default effort from its adapter. */
   const resolveSessionEfforts = async (
     provider: string,
     model: string,
@@ -473,37 +489,29 @@ export function apply(ctx: Context, config: BridgeConfig): void {
         validateSessionParams(params)
         const sessionId = SessionId(randomUUID())
         const defaultSelection = ctx.agentDefaultModel.currentSelection()
-        const catalogProvider = resolveCatalogProvider(config.provider, defaultSelection.provider)
+        const catalogs = await loadCatalogs(defaultSelection.provider)
+        const selected = pickCurrentModel(config, catalogs, defaultSelection)
         const handle = await agents.create({
           sessionId,
           meta: { cwd: params.cwd },
-          agentOptions: resolveAgentOptions(config, defaultSelection),
+          agentOptions: { provider: selected.provider, model: selected.model },
         })
         if (closed) {
           await handle.dispose()
           throw internalError('connection closed during session/new')
         }
         const agent = handle.agent
+        const { efforts, defaultEffort } = await resolveSessionEfforts(selected.provider, selected.model)
+        const configuredEffort = defaultSelection.reasoningEffort
+        const initialEffort = configuredEffort !== undefined && isEffortValue(configuredEffort, efforts)
+          ? configuredEffort
+          : ReasoningEffortId(defaultEffort ?? efforts[0]?.id ?? 'off')
 
-        let catalog: readonly LlmModelInfo[] = []
-        try {
-          catalog = await ctx.llm.listModels(catalogProvider)
-        } catch (error) {
-          logger.warn(`acp: model catalog discovery failed: ${errorChain(error)}`)
-        }
-
-        const currentModelId = pickCurrentModelId(config, catalogProvider, catalog, defaultSelection)
-        const { efforts, defaultEffort } = await resolveSessionEfforts(catalogProvider, currentModelId)
-
-        const pinned = config.provider !== undefined || config.model !== undefined
         const selection: ModelSelectionRef = {
           current: {
-            ...(pinned
-              ? { provider: catalogProvider, model: config.model ?? currentModelId }
-              : { ...defaultSelection }),
-            reasoningEffort: ReasoningEffortId(
-              defaultSelection.reasoningEffort ?? defaultEffort ?? efforts[0]?.id ?? 'off',
-            ),
+            provider: selected.provider,
+            model: selected.model,
+            reasoningEffort: initialEffort,
           },
           assembled: undefined,
         }
@@ -515,7 +523,7 @@ export function apply(ctx: Context, config: BridgeConfig): void {
           inflight: undefined,
           selection,
           disposeSelection,
-          catalogProvider,
+          catalogs,
           efforts,
           commandAbort: undefined,
           inFlightTools: new Set<string>(),
@@ -527,7 +535,7 @@ export function apply(ctx: Context, config: BridgeConfig): void {
         const effort = selection.current?.reasoningEffort ?? 'off'
         return {
           sessionId,
-          models: buildModelState(catalog, currentModelId),
+          models: buildModelState(catalogs, selected),
           modes: buildModeState(MODE_EXECUTE),
           configOptions: [buildThoughtLevelOption(effort, efforts)],
         }
@@ -605,21 +613,24 @@ export function apply(ctx: Context, config: BridgeConfig): void {
       async unstable_setSessionModel(params: SetSessionModelRequest): Promise<SetSessionModelResponse> {
         assertOpen()
         const record = requireSession(params.sessionId)
-        let catalog: readonly LlmModelInfo[] = []
-        try {
-          catalog = await ctx.llm.listModels(record.catalogProvider)
-        } catch (error) {
-          logger.warn(`acp: model catalog discovery failed: ${errorChain(error)}`)
+        const selected = resolveCatalogModel(record.catalogs, params.modelId)
+        if (selected === undefined) {
+          const available = record.catalogs.flatMap(({ provider, models }) => (
+            models.map((model) => encodeModelId(provider.id, model.id))
+          ))
+          throw invalidParams(`unknown model: ${params.modelId} (available: ${available.join(', ')})`)
         }
-        if (!catalog.some((model) => model.id === params.modelId)) {
-          throw invalidParams(
-            `unknown model: ${params.modelId} (available: ${catalog.map((model) => model.id).join(', ')})`,
-          )
+        const { efforts, defaultEffort } = await resolveSessionEfforts(selected.provider, selected.model)
+        record.efforts = efforts
+        const currentEffort = record.selection.current?.reasoningEffort
+        const effort = currentEffort !== undefined && isEffortValue(currentEffort, efforts)
+          ? currentEffort
+          : ReasoningEffortId(defaultEffort ?? efforts[0]?.id ?? 'off')
+        record.selection.current = {
+          provider: selected.provider,
+          model: selected.model,
+          reasoningEffort: effort,
         }
-        const current = record.selection.current
-        const next: ModelSelection = { provider: record.catalogProvider, model: params.modelId }
-        if (current?.reasoningEffort !== undefined) next.reasoningEffort = current.reasoningEffort
-        record.selection.current = next
         return {}
       },
 
@@ -695,36 +706,30 @@ export function apply(ctx: Context, config: BridgeConfig): void {
   ctx.effect(() => quiesce, 'dsh-acp-paseo.connection')
 }
 
-/** Pick the model id displayed as current in the catalog Paseo receives. */
-function pickCurrentModelId(
+/** Pick the route/model displayed as current in the catalog Paseo receives. */
+function pickCurrentModel(
   config: BridgeConfig,
-  catalogProvider: string,
-  catalog: readonly LlmModelInfo[],
-  defaultSelection: ModelSelection,
-): string {
-  if (config.model !== undefined) return config.model
-  if (
-    defaultSelection.provider === catalogProvider &&
-    catalog.some((model) => model.id === defaultSelection.model)
-  ) {
-    return defaultSelection.model
+  catalogs: readonly DshProviderCatalog[],
+  defaultSelection: RoutedModelSelection,
+): RoutedModelSelection {
+  if (config.provider !== undefined && config.model !== undefined) {
+    return { provider: config.provider, model: config.model }
   }
-  return catalog[0]?.id ?? defaultSelection.model
-}
-
-/**
- * Build per-agent creation options. Config pins win; otherwise the deployment
- * default selection is used. Options are ALWAYS explicit: subagents inherit
- * `parent.options.provider/model` via `resolveChildAgentOptions`, and an
- * empty options object would leave the child's request route empty, failing
- * every child turn with "has no provider/model". (Web parity: the web host
- * passes the same explicit options on every session creation.)
- */
-function resolveAgentOptions(config: BridgeConfig, defaultSelection: ModelSelection): { provider: string; model: string } {
-  return {
-    provider: config.provider ?? defaultSelection.provider,
-    model: config.model ?? defaultSelection.model,
+  if (config.provider !== undefined) {
+    const first = catalogs.find(({ provider }) => provider.id === config.provider)?.models[0]
+    return { provider: config.provider, model: first?.id ?? defaultSelection.model }
   }
+  if (config.model !== undefined) {
+    const qualified = decodeModelId(config.model)
+    return qualified ?? { provider: defaultSelection.provider, model: config.model }
+  }
+  const current = catalogs.find(({ provider }) => provider.id === defaultSelection.provider)
+  if (current?.models.some((model) => model.id === defaultSelection.model) === true) return defaultSelection
+  const firstCatalog = catalogs[0]
+  const firstModel = firstCatalog?.models[0]
+  return firstCatalog === undefined || firstModel === undefined
+    ? defaultSelection
+    : { provider: firstCatalog.provider.id, model: firstModel.id }
 }
 
 /** Reject session features outside the bridge contract. */

@@ -14,6 +14,18 @@ export interface DshModelInfo {
   readonly description?: string;
 }
 
+/** dsh provider descriptor (structural mirror of LlmProviderInfo). */
+export interface DshProviderInfo {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** One provider and the models it currently advertises. */
+export interface DshProviderCatalog {
+  readonly provider: DshProviderInfo;
+  readonly models: readonly DshModelInfo[];
+}
+
 /** dsh command descriptor (structural mirror of CommandDescriptor). */
 export interface DshCommandDescriptor {
   readonly name: string;
@@ -72,16 +84,65 @@ export interface AcpAvailableCommand {
   readonly input?: { readonly hint: string };
 }
 
-/**
- * Resolve the provider route whose model catalog one ACP session exposes.
- * An explicit bridge pin wins; otherwise the session follows dsh's live
- * default selection instead of assuming a first-party route.
- */
-export function resolveCatalogProvider(
+/** One decoded ACP model selection. */
+export interface RoutedModelSelection {
+  readonly provider: string;
+  readonly model: string;
+}
+
+/** Encode one route/model pair into an unambiguous ACP model id. */
+export function encodeModelId(provider: string, model: string): string {
+  return `${encodeURIComponent(provider)}/${encodeURIComponent(model)}`;
+}
+
+/** Decode an ACP model id emitted by {@link encodeModelId}. */
+export function decodeModelId(modelId: string): RoutedModelSelection | undefined {
+  const separator = modelId.indexOf('/');
+  if (separator <= 0 || separator === modelId.length - 1) return undefined;
+  try {
+    const provider = decodeURIComponent(modelId.slice(0, separator));
+    const model = decodeURIComponent(modelId.slice(separator + 1));
+    return provider.length === 0 || model.length === 0 ? undefined : { provider, model };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Provider ids whose catalogs an ACP session exposes, default route first. */
+export function catalogProviderIds(
+  providers: readonly DshProviderInfo[],
   configuredProvider: string | undefined,
   defaultProvider: string,
-): string {
-  return configuredProvider ?? defaultProvider;
+): string[] {
+  if (configuredProvider !== undefined) return [configuredProvider];
+  const ids = providers.map((provider) => provider.id);
+  return ids.includes(defaultProvider)
+    ? [defaultProvider, ...ids.filter((provider) => provider !== defaultProvider)]
+    : [defaultProvider, ...ids];
+}
+
+/**
+ * Load provider catalogs in parallel, retaining successful non-empty siblings.
+ * @param providers - selected provider descriptors in display order.
+ * @param listModels - model loader for one provider route.
+ * @param onFailure - observer for one provider-local failure.
+ * @returns successful non-empty catalogs in provider order.
+ */
+export async function loadProviderCatalogs(
+  providers: readonly DshProviderInfo[],
+  listModels: (provider: string) => Promise<readonly DshModelInfo[]>,
+  onFailure: (provider: string, error: unknown) => void,
+): Promise<DshProviderCatalog[]> {
+  const loaded = await Promise.all(providers.map(async (provider): Promise<DshProviderCatalog | undefined> => {
+    try {
+      const models = await listModels(provider.id);
+      return models.length === 0 ? undefined : { provider, models };
+    } catch (error) {
+      onFailure(provider.id, error);
+      return undefined;
+    }
+  }));
+  return loaded.filter((catalog): catalog is DshProviderCatalog => catalog !== undefined);
 }
 
 /** Mode ids. `execute` is the default; `plan` mirrors dsh plan mode. */
@@ -124,18 +185,35 @@ export function modeIdForPlanActive(active: boolean): string {
   return active ? MODE_PLAN : MODE_EXECUTE;
 }
 
-/** Build the ACP model state from the dsh catalog and the current selection. */
+/** Resolve one ACP model id against the advertised provider catalogs. */
+export function resolveCatalogModel(
+  catalogs: readonly DshProviderCatalog[],
+  modelId: string,
+): RoutedModelSelection | undefined {
+  const qualified = decodeModelId(modelId);
+  if (qualified !== undefined) {
+    return catalogs.some(({ provider, models }) => (
+      provider.id === qualified.provider && models.some((model) => model.id === qualified.model)
+    )) ? qualified : undefined;
+  }
+  const legacy = catalogs.flatMap(({ provider, models }) => (
+    models.filter((model) => model.id === modelId).map((model) => ({ provider: provider.id, model: model.id }))
+  ));
+  return legacy.length === 1 ? legacy[0] : undefined;
+}
+
+/** Build the ACP model state from provider catalogs and the current selection. */
 export function buildModelState(
-  models: readonly DshModelInfo[],
-  currentModelId: string,
+  catalogs: readonly DshProviderCatalog[],
+  current: RoutedModelSelection,
 ): AcpSessionModelState {
   return {
-    availableModels: models.map((model) => ({
-      modelId: model.id,
-      name: model.name,
+    availableModels: catalogs.flatMap(({ provider, models }) => models.map((model) => ({
+      modelId: encodeModelId(provider.id, model.id),
+      name: `${model.name} · ${provider.name}`,
       ...(model.description !== undefined ? { description: model.description } : {}),
-    })),
-    currentModelId,
+    }))),
+    currentModelId: encodeModelId(current.provider, current.model),
   };
 }
 
