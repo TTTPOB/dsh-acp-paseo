@@ -4,8 +4,8 @@
 
 ## 特性
 
-- **模型目录自动发现**：Paseo 打开会话即拿到 dsh 的模型目录（`deepseek-official` 路由），无需在 Paseo 配置模型列表；会话内可切模型
-- **凭据由 dsh 管理**：`DEEPSEEK_API_KEY` 走 dsh 的凭据链（env → `$DSH_HOME/.credentials.yaml` → `.env`），Paseo 不接触密钥
+- **模型目录自动发现**：Paseo 打开会话即拿到 dsh 当前默认路由的模型目录，无需在 Paseo 配置模型列表；会话内可切模型
+- **凭据由 dsh 管理**：所选路由的 credential 走 dsh 的凭据链（env → `$DSH_HOME/.credentials.yaml` → `.env`），Paseo 不接触密钥
 - **模式选择**：`execute`（默认）/ `plan`（只读规划），对应 dsh 的 plan mode 布尔开关
 - **思考强度**：`off` / `high` / `max` 选择器，落到 dsh 的 `reasoningEffort`
 - **斜杠命令**：`/compact`、`/goal`、`/plan`、`/permission`、`/feedback` 自动出现在 Paseo 命令菜单，原地执行、不进模型（`/export` 等 web-only 命令被过滤）

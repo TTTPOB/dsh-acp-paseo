@@ -4,8 +4,8 @@
  * On top of the baseline prompt/cancel transport this bridge exposes the
  * surfaces Paseo auto-discovers from `session/new`:
  *
- *   - the model catalog of the `deepseek-official` route (read live from
- *     `ctx.llm`) plus real model switching through `session/set_model`,
+ *   - the model catalog of the configured route, or the live dsh default
+ *     route when unpinned, plus real switching through `session/set_model`,
  *   - two session modes, `execute` and `plan`, mapped onto the dsh plan-mode
  *     boolean and switched through `session/set_mode`,
  *   - a `thought_level` config option (off/high/max) mapped onto the dsh
@@ -67,7 +67,6 @@ import {
   turnEndToStopReason,
 } from './codec.ts'
 import {
-  DEFAULT_CATALOG_PROVIDER,
   DEFAULT_COMMAND_BLOCKLIST,
   MODE_EXECUTE,
   MODE_PLAN,
@@ -79,6 +78,7 @@ import {
   isEffortValue,
   isModeId,
   modeIdForPlanActive,
+  resolveCatalogProvider,
   resolveEfforts,
 } from './catalog.ts'
 import type { DshEffortInfo } from './catalog.ts'
@@ -138,6 +138,7 @@ interface SessionRecord {
   inflight: InflightSlot | undefined
   selection: ModelSelectionRef
   disposeSelection(): void
+  catalogProvider: string
   efforts: readonly DshEffortInfo[]
   commandAbort: AbortController | undefined
   inFlightTools: Set<string>
@@ -160,7 +161,6 @@ function internalError(detail: string): RequestError {
 export function apply(ctx: Context, config: BridgeConfig): void {
   const agents = ctx.agents
   const logger = ctx.logger
-  const catalogProvider = config.provider ?? DEFAULT_CATALOG_PROVIDER
   const blocklist = config.commandBlocklist ?? [...DEFAULT_COMMAND_BLOCKLIST]
   const sessions = new Map<string, SessionRecord>()
   /** (sessionId:turn:step) pairs whose deltas were already streamed. */
@@ -434,10 +434,11 @@ export function apply(ctx: Context, config: BridgeConfig): void {
 
   /** Resolve the session's effort ladder and default effort from the adapter. */
   const resolveSessionEfforts = async (
+    provider: string,
     model: string,
   ): Promise<{ efforts: readonly DshEffortInfo[]; defaultEffort: string | undefined }> => {
     try {
-      const resolved = await ctx.llm.resolveModelInfo(catalogProvider, model)
+      const resolved = await ctx.llm.resolveModelInfo(provider, model)
       return {
         efforts: resolveEfforts(resolved.reasoning?.efforts),
         defaultEffort: resolved.reasoning?.defaultEffort,
@@ -471,6 +472,7 @@ export function apply(ctx: Context, config: BridgeConfig): void {
         validateSessionParams(params)
         const sessionId = SessionId(randomUUID())
         const defaultSelection = ctx.agentDefaultModel.currentSelection()
+        const catalogProvider = resolveCatalogProvider(config.provider, defaultSelection.provider)
         const handle = await agents.create({
           sessionId,
           meta: { cwd: params.cwd },
@@ -490,13 +492,13 @@ export function apply(ctx: Context, config: BridgeConfig): void {
         }
 
         const currentModelId = pickCurrentModelId(config, catalogProvider, catalog, defaultSelection)
-        const { efforts, defaultEffort } = await resolveSessionEfforts(currentModelId)
+        const { efforts, defaultEffort } = await resolveSessionEfforts(catalogProvider, currentModelId)
 
         const pinned = config.provider !== undefined || config.model !== undefined
         const selection: ModelSelectionRef = {
           current: {
             ...(pinned
-              ? { provider: config.provider ?? catalogProvider, model: config.model ?? currentModelId }
+              ? { provider: catalogProvider, model: config.model ?? currentModelId }
               : { ...defaultSelection }),
             reasoningEffort: ReasoningEffortId(
               defaultSelection.reasoningEffort ?? defaultEffort ?? efforts[0]?.id ?? 'off',
@@ -512,6 +514,7 @@ export function apply(ctx: Context, config: BridgeConfig): void {
           inflight: undefined,
           selection,
           disposeSelection,
+          catalogProvider,
           efforts,
           commandAbort: undefined,
           inFlightTools: new Set<string>(),
@@ -603,7 +606,7 @@ export function apply(ctx: Context, config: BridgeConfig): void {
         const record = requireSession(params.sessionId)
         let catalog: readonly LlmModelInfo[] = []
         try {
-          catalog = await ctx.llm.listModels(catalogProvider)
+          catalog = await ctx.llm.listModels(record.catalogProvider)
         } catch (error) {
           logger.warn(`acp: model catalog discovery failed: ${errorChain(error)}`)
         }
@@ -613,7 +616,7 @@ export function apply(ctx: Context, config: BridgeConfig): void {
           )
         }
         const current = record.selection.current
-        const next: ModelSelection = { provider: catalogProvider, model: params.modelId }
+        const next: ModelSelection = { provider: record.catalogProvider, model: params.modelId }
         if (current?.reasoningEffort !== undefined) next.reasoningEffort = current.reasoningEffort
         record.selection.current = next
         return {}

@@ -72,8 +72,17 @@ export interface AcpAvailableCommand {
   readonly input?: { readonly hint: string };
 }
 
-/** The provider route whose catalog v1 exposes (overridable via plugin config). */
-export const DEFAULT_CATALOG_PROVIDER = 'deepseek-official';
+/**
+ * Resolve the provider route whose model catalog one ACP session exposes.
+ * An explicit bridge pin wins; otherwise the session follows dsh's live
+ * default selection instead of assuming a first-party route.
+ */
+export function resolveCatalogProvider(
+  configuredProvider: string | undefined,
+  defaultProvider: string,
+): string {
+  return configuredProvider ?? defaultProvider;
+}
 
 /** Mode ids. `execute` is the default; `plan` mirrors dsh plan mode. */
 export const MODE_EXECUTE = 'execute';
@@ -153,7 +162,7 @@ export function buildThoughtLevelOption(
     id: THOUGHT_LEVEL_CONFIG_ID,
     name: 'Thinking',
     category: THOUGHT_LEVEL_CATEGORY,
-    description: 'Reasoning effort for the DeepSeek model',
+    description: 'Reasoning effort for the selected model',
     currentValue,
     options: efforts.map((effort) => ({
       name: effort.name,

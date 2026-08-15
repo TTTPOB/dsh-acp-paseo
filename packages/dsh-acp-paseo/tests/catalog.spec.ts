@@ -14,6 +14,7 @@ import {
   isEffortValue,
   isModeId,
   modeIdForPlanActive,
+  resolveCatalogProvider,
   resolveEfforts,
 } from '../src/catalog.ts'
 
@@ -21,6 +22,17 @@ const CATALOG = [
   { provider: 'deepseek-official', id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' },
   { provider: 'deepseek-official', id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', description: 'Flagship' },
 ]
+
+describe('resolveCatalogProvider', () => {
+  it('follows the dsh default route when the bridge is unpinned', () => {
+    expect(resolveCatalogProvider(undefined, 'klaude-openai')).toBe('klaude-openai')
+    expect(resolveCatalogProvider(undefined, 'opencode-go')).toBe('opencode-go')
+  })
+
+  it('keeps an explicit bridge route pin', () => {
+    expect(resolveCatalogProvider('derived-provider', 'klaude-openai')).toBe('derived-provider')
+  })
+})
 
 describe('buildModelState', () => {
   it('maps the dsh catalog to ACP model info', () => {

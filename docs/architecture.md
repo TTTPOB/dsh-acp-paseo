@@ -28,7 +28,7 @@ Paseo daemon ──每 agent spawn──▶ bin/dsh-acp-paseo-launch.mjs
 | ACP 方法 | 实现 | 落点 |
 |---|---|---|
 | `initialize` | 固定能力（仅文本 prompt，无 fs/terminal/MCP 能力） | — |
-| `session/new` | 创建 agent 并返回三套状态：`models`（deepseek-official 目录 + 当前模型）、`modes`（execute/plan）、`configOptions`（thought_level） | `ctx.llm.listModels` / `ctx.agentDefaultModel` / `ctx.llm.resolveModelInfo` |
+| `session/new` | 创建 agent 并返回三套状态：`models`（显式 provider 或 dsh 当前默认路由的目录 + 当前模型）、`modes`（execute/plan）、`configOptions`（thought_level） | `ctx.llm.listModels` / `ctx.agentDefaultModel` / `ctx.llm.resolveModelInfo` |
 | `session/prompt` | 单 text block 以 `/` 开头 → Command Passthrough；否则普通消息 | `ctx.commands.execute` / `createUserMessage` + `followup` |
 | `session/cancel` | 中止在途命令与工具、结算 prompt | `agent.cancel({kind:'user'})` |
 | `session/set_mode` | execute/plan → dsh plan mode 布尔开关 | `ctx.planMode.set` |

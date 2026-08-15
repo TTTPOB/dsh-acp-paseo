@@ -29,7 +29,7 @@ dsh 的长任务目标领域服务，只能经由 `/goal` 斜杠命令使用。*
 _Avoid_: goal mode
 
 **Catalog**:
-`session/new` 响应里返回给 Paseo 的模型目录（`models.availableModels` + `currentModelId`），运行时读自 dsh 的 `ctx.llm`。v1 只含 `deepseek-official` 路由的模型。
+`session/new` 响应里返回给 Paseo 的模型目录（`models.availableModels` + `currentModelId`），运行时读自 dsh 的 `ctx.llm`。显式配置 provider 时读取该路由，否则读取会话创建时的 dsh 默认路由。
 _Avoid_: model list
 
 **Thought Level**:
