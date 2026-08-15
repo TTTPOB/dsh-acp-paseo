@@ -82,6 +82,7 @@ import {
   resolveEfforts,
 } from './catalog.ts'
 import type { DshEffortInfo } from './catalog.ts'
+import { buildPermissionToolCall } from './permission.ts'
 import {
   parseToolArguments,
   renderToolResultText,
@@ -385,7 +386,7 @@ export function apply(ctx: Context, config: BridgeConfig): void {
     return conn
       .requestPermission({
         sessionId: record.agent.session.id,
-        toolCall: { toolCallId: request.callId },
+        toolCall: buildPermissionToolCall(request.callId, request.reason),
         options: [
           { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
           { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },

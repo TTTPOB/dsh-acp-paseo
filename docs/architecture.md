@@ -34,7 +34,7 @@ Paseo daemon ──每 agent spawn──▶ bin/dsh-acp-paseo-launch.mjs
 | `session/set_mode` | execute/plan → dsh plan mode 布尔开关 | `ctx.planMode.set` |
 | `session/set_model`（unstable） | 校验目录内 → 改会话的 `ModelSelectionRef.current` | `installModelSelection(agent.ctx, ref)` |
 | `session/set_config_option` | thought_level → `selection.reasoningEffort` | 同上 |
-| `requestPermission`（agent→client） | allow-once / reject-once 一次选项 | `approval/request` 瀑布 |
+| `requestPermission`（agent→client） | allow-once / reject-once 一次选项；`request.reason` 作为 tool-call title 供 Paseo 展示 | `approval/request` 瀑布 |
 
 ## 流式映射（dsh 会话事件 → ACP session/update）
 
