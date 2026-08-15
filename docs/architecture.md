@@ -21,7 +21,7 @@ Paseo daemon ──每 agent spawn──▶ bin/dsh-acp-paseo-launch.mjs
 - **Launcher**（`bin/dsh-acp-paseo-launch.mjs`）：Paseo spawn 的稳定入口。诊断全部走 stderr（`[dsh-acp-paseo-launch]` 前缀），stdout 保持协议纯净；`--version` 探针由自身应答；dsh 解析序 `DSH_ACP_PASEO_DSH` → PATH（win32 PATHEXT 感知）→ `$DSH_HOME/source/current/bin/dsh`；每次启动自愈专属 profile（缺 bundle 层即 `dsh plugin --profile dsh-acp-paseo add <spec>`，幂等）；默认 `DSH_PERMISSION_MODE=workspace-write`。
 - **Profile**（`dsh-acp-paseo`）：dsh-base 提供完整产品组合（agent-loop / llm / session / sandbox / approval / 命令注册表 / plan-mode / goal / compact / 持久化……），本 bundle 的 patch 层只做两件事：插入桥插件行、覆盖 persona。
 - **Provider Entry**（Paseo `config.json` → `agents.providers.dsh`）：`{extends: "acp", command: [launcher], params: {supportsMcpServers: false}, enabled: true}`，**不声明 `models`/`env`** —— Paseo 走 ACP 自动发现（`session/new` 响应里的 `models`/`modes`/`configOptions`），凭据由 dsh 侧自解析（env → `$DSH_HOME/.credentials.yaml` → 项目 `.env` → `$DSH_HOME/.env`）。
-- **桥**（`packages/dsh-acp-paseo/src/index.ts`）：唯一"说话"的组件，见下。
+- **桥**（`packages/dsh-acp-paseo/src/index.ts`）：唯一"说话"的组件；注入 settings 服务后才激活，确保首个 `session/new` 已能读取用户默认模型设置，见下。
 
 ## 桥的 ACP 面
 

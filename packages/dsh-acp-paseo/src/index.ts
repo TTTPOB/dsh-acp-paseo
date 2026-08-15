@@ -92,7 +92,7 @@ import {
 export const name = 'dsh-acp-paseo'
 
 /** The bridge creates and owns agents; every other concern is carried by the composition. */
-export const inject = ['agents', 'llm', 'commands', 'planMode', 'agentDefaultModel']
+export const inject = ['agents', 'llm', 'commands', 'planMode', 'agentDefaultModel', 'settings']
 
 const { version: BRIDGE_VERSION } = readPackageVersion()
 
