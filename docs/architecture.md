@@ -28,12 +28,12 @@ Paseo daemon ──每 agent spawn──▶ bin/dsh-acp-paseo-launch.mjs
 | ACP 方法 | 实现 | 落点 |
 |---|---|---|
 | `initialize` | 固定能力（仅文本 prompt，无 fs/terminal/MCP 能力） | — |
-| `session/new` | 创建 agent 并返回三套状态：`models`（所有已注册 provider 的聚合目录；显式 pin 时为单路由）、`modes`（execute/plan）、`configOptions`（thought_level） | `ctx.llm.listProviders` / `ctx.llm.listModels` / `ctx.agentDefaultModel` / `ctx.llm.resolveModelInfo` |
+| `session/new` | 创建 agent 并返回三套状态：`models`（所有已注册 provider 的聚合目录；显式 pin 时为单路由）、`modes`（execute/plan）、`configOptions`（thought_level + permissions，后者仅在挂载 `permission-presets` 服务时出现） | `ctx.llm.listProviders` / `ctx.llm.listModels` / `ctx.agentDefaultModel` / `ctx.llm.resolveModelInfo` |
 | `session/prompt` | 单 text block 以 `/` 开头 → Command Passthrough；否则普通消息 | `ctx.commands.execute` / `createUserMessage` + `followup` |
 | `session/cancel` | 中止在途命令与工具、结算 prompt | `agent.cancel({kind:'user'})` |
 | `session/set_mode` | execute/plan → dsh plan mode 布尔开关 | `ctx.planMode.set` |
 | `session/set_model`（unstable） | 解码 `provider/model`、校验聚合目录 → 同时切换会话 provider 与 model | `installModelSelection(agent.ctx, ref)` |
-| `session/set_config_option` | thought_level → `selection.reasoningEffort` | 同上 |
+| `session/set_config_option` | thought_level → `selection.reasoningEffort`；permissions → `ctx.permissionPresets.set`（`custom` 派生态不可切换） | 同上 |
 | `requestPermission`（agent→client） | allow-once / reject-once 一次选项；`request.reason` 作为 tool-call title 供 Paseo 展示 | `approval/request` 瀑布 |
 
 ## 流式映射（dsh 会话事件 → ACP session/update）
@@ -46,6 +46,7 @@ Paseo daemon ──每 agent spawn──▶ bin/dsh-acp-paseo-launch.mjs
 | `tool/call` | `tool_call`（`in_progress`） | title=命令/路径/prompt 摘要，kind 见下表，rawInput=解析后的 arguments |
 | `tool/result` | `tool_call_update`（`completed`/`failed`） | content=结果文本（截断 8000 字符），rawOutput=output/error |
 | `plan/mode` | `current_mode_update` | 会话内 `/plan`、`exit_plan_mode` 触发的自主切换 |
+| `permission/preset` | `config_option_update` | `/permission` 命令是第二条写路径，重推全量选项保持 Paseo 选择器同步 |
 | `commands/change` | `available_commands_update` | 命令注册表变更即时重推 |
 | `turn/end`（error） | prompt 响应 reject | 回合失败 → RPC internalError |
 
@@ -82,5 +83,5 @@ Paseo daemon ──每 agent spawn──▶ bin/dsh-acp-paseo-launch.mjs
 
 - Fresh-only 会话；image/audio/embedded 块与 MCP 服务器显式拒绝。
 - 工具 kind 映射是名字表驱动的（`src/tools.ts`），新工具默认 `other`。
-- 富权限选项（once/always）、`usage_update`、plan 更新未实现。
+- 富权限选项（once/always）、`usage_update`、plan 更新未实现。权限预设选择器已实现，但 Paseo 端是否渲染非官方 `permissions` category 的 configOption 需实测（`thought_level` 是官方 category）。
 - Windows 尽力支持（PATHEXT、`.cmd` shell spawn 加固），以实测为准。

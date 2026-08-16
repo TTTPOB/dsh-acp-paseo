@@ -8,6 +8,7 @@
 - **凭据由 dsh 管理**：所选路由的 credential 走 dsh 的凭据链（env → `$DSH_HOME/.credentials.yaml` → `.env`），Paseo 不接触密钥
 - **模式选择**：`execute`（默认）/ `plan`（只读规划），对应 dsh 的 plan mode 布尔开关
 - **思考强度**：`off` / `high` / `max` 选择器，落到 dsh 的 `reasoningEffort`
+- **权限预设**：`workspace-write` / `danger-full-access` 选择器，会话内可切换，落到 dsh 的 sandbox mode + approval policy；`/permission` 命令的变更同步回 Paseo，未挂预设服务的组合自动不暴露
 - **斜杠命令**：`/compact`、`/goal`、`/plan`、`/permission`、`/feedback` 自动出现在 Paseo 命令菜单，原地执行、不进模型（`/export` 等 web-only 命令被过滤）
 - **实时流**：思维链（`agent_thought_chunk`）、增量文本、工具调用全生命周期（bash/文件/搜索/subagent 委托）实时可见
 - **子代理可用**：模型前台/后台调用 subagent 正常工作（显式模型选项继承，见 [ADR-0004](docs/adr/0004-explicit-model-options.md)）

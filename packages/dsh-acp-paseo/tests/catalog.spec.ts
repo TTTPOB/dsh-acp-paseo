@@ -1,21 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import {
   AVAILABLE_MODES,
+  CUSTOM_PRESET_VALUE,
   DEFAULT_COMMAND_BLOCKLIST,
   FALLBACK_EFFORTS,
   MODE_EXECUTE,
   MODE_PLAN,
+  PERMISSIONS_CATEGORY,
+  PERMISSIONS_CONFIG_ID,
   THOUGHT_LEVEL_CATEGORY,
   THOUGHT_LEVEL_CONFIG_ID,
   buildAvailableCommands,
   buildModeState,
   buildModelState,
+  buildPermissionOption,
   buildThoughtLevelOption,
   catalogProviderIds,
   decodeModelId,
   encodeModelId,
   isEffortValue,
   isModeId,
+  isPermissionValue,
   loadProviderCatalogs,
   modeIdForPlanActive,
   resolveCatalogModel,
@@ -173,6 +178,38 @@ describe('thought level', () => {
   it('validates effort values against the session ladder', () => {
     expect(isEffortValue('max', FALLBACK_EFFORTS)).toBe(true)
     expect(isEffortValue('ultra', FALLBACK_EFFORTS)).toBe(false)
+  })
+})
+
+describe('permissions config option', () => {
+  const PRESET_OPTIONS = [
+    { value: 'workspace-write', name: 'workspace-write' },
+    { value: 'danger-full-access', name: 'danger-full-access' },
+  ]
+
+  it('builds a select config option in the permissions category', () => {
+    const option = buildPermissionOption('workspace-write', PRESET_OPTIONS)
+    expect(option.type).toBe('select')
+    expect(option.id).toBe(PERMISSIONS_CONFIG_ID)
+    expect(option.category).toBe(PERMISSIONS_CATEGORY)
+    expect(option.currentValue).toBe('workspace-write')
+    expect(option.options).toEqual(PRESET_OPTIONS)
+  })
+
+  it('accepts the derived custom state as current value', () => {
+    const option = buildPermissionOption(CUSTOM_PRESET_VALUE, [...PRESET_OPTIONS, {
+      value: CUSTOM_PRESET_VALUE,
+      name: 'Custom',
+    }])
+    expect(option.currentValue).toBe(CUSTOM_PRESET_VALUE)
+  })
+
+  it('validates switch targets but never the derived custom state', () => {
+    const options = [...PRESET_OPTIONS, { value: CUSTOM_PRESET_VALUE, name: 'Custom' }]
+    expect(isPermissionValue('workspace-write', options)).toBe(true)
+    expect(isPermissionValue('danger-full-access', options)).toBe(true)
+    expect(isPermissionValue(CUSTOM_PRESET_VALUE, options)).toBe(false)
+    expect(isPermissionValue('read-only', options)).toBe(false)
   })
 })
 

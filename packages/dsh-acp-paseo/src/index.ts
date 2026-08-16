@@ -50,6 +50,7 @@ import type {
   StopReason,
 } from '@agentclientprotocol/sdk'
 import type { Stream } from '@agentclientprotocol/sdk'
+import type { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage, errorChain, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
@@ -66,25 +67,29 @@ import {
   turnEndToStopReason,
 } from './codec.ts'
 import {
+  CUSTOM_PRESET_VALUE,
   DEFAULT_COMMAND_BLOCKLIST,
   MODE_EXECUTE,
   MODE_PLAN,
+  PERMISSIONS_CONFIG_ID,
   THOUGHT_LEVEL_CONFIG_ID,
   buildAvailableCommands,
   buildModeState,
   buildModelState,
+  buildPermissionOption,
   buildThoughtLevelOption,
   catalogProviderIds,
   decodeModelId,
   encodeModelId,
   isEffortValue,
   isModeId,
+  isPermissionValue,
   loadProviderCatalogs,
   modeIdForPlanActive,
   resolveCatalogModel,
   resolveEfforts,
 } from './catalog.ts'
-import type { DshEffortInfo, DshProviderCatalog, RoutedModelSelection } from './catalog.ts'
+import type { AcpSelectConfigOption, DshEffortInfo, DshProviderCatalog, RoutedModelSelection } from './catalog.ts'
 import { buildPermissionToolCall } from './permission.ts'
 import {
   parseToolArguments,
@@ -358,6 +363,16 @@ export function apply(ctx: Context, config: BridgeConfig): void {
         }
       } else if (event.type === 'plan/mode') {
         notifyMode(record, modeIdForPlanActive(event.data.active))
+      } else if (event.type === 'permission/preset') {
+        // The /permission command is a second write path; keep the Paseo
+        // selector in sync by re-advertising the full option set.
+        const option = permissionOption(record)
+        if (option !== undefined) {
+          notify({
+            sessionId: record.agent.session.id,
+            update: { sessionUpdate: 'config_option_update', configOptions: sessionConfigOptions(record) },
+          })
+        }
       }
     } finally {
       const inflight = record.inflight
@@ -466,6 +481,30 @@ export function apply(ctx: Context, config: BridgeConfig): void {
     }
   }
 
+  /** The permission-preset service when the composition mounts it (dsh-base does). */
+  const permissionPresets = (): PermissionPresetService | undefined => (
+    ctx.get('permissionPresets') as PermissionPresetService | undefined
+  )
+
+  /** Build the permissions select option, or nothing without the presets service. */
+  const permissionOption = (record: SessionRecord): AcpSelectConfigOption | undefined => {
+    const service = permissionPresets()
+    if (service === undefined) return undefined
+    const current = service.current(record.agent.session.events)
+    const options = service.names.map((name) => service.optionOf(name))
+    if (current === CUSTOM_PRESET_VALUE) options.push(service.optionOf(CUSTOM_PRESET_VALUE))
+    return buildPermissionOption(current, options)
+  }
+
+  /** The complete config-option set the session advertises, in stable order. */
+  const sessionConfigOptions = (record: SessionRecord): AcpSelectConfigOption[] => {
+    const effort = record.selection.current?.reasoningEffort ?? 'off'
+    const options = [buildThoughtLevelOption(effort, record.efforts)]
+    const permission = permissionOption(record)
+    if (permission !== undefined) options.push(permission)
+    return options
+  }
+
   const makeAgent = (connection: AgentSideConnection) => {
     conn = connection
     return {
@@ -532,12 +571,11 @@ export function apply(ctx: Context, config: BridgeConfig): void {
         sessions.set(sessionId, record)
         scheduleCommandBroadcast(record)
 
-        const effort = selection.current?.reasoningEffort ?? 'off'
         return {
           sessionId,
           models: buildModelState(catalogs, selected),
           modes: buildModeState(MODE_EXECUTE),
-          configOptions: [buildThoughtLevelOption(effort, efforts)],
+          configOptions: sessionConfigOptions(record),
         }
       },
 
@@ -637,18 +675,30 @@ export function apply(ctx: Context, config: BridgeConfig): void {
       async setSessionConfigOption(params: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse> {
         assertOpen()
         const record = requireSession(params.sessionId)
-        if (params.configId !== THOUGHT_LEVEL_CONFIG_ID) {
+        if (params.configId === THOUGHT_LEVEL_CONFIG_ID) {
+          const value = params.value
+          if (typeof value !== 'string' || !isEffortValue(value, record.efforts)) {
+            throw invalidParams(`invalid value for ${THOUGHT_LEVEL_CONFIG_ID}: ${String(value)}`)
+          }
+          const current = record.selection.current
+          if (current !== undefined) {
+            record.selection.current = { ...current, reasoningEffort: ReasoningEffortId(value) }
+          }
+        } else if (params.configId === PERMISSIONS_CONFIG_ID) {
+          const service = permissionPresets()
+          const option = permissionOption(record)
+          if (service === undefined || option === undefined) {
+            throw invalidParams(`unknown config option: ${params.configId}`)
+          }
+          const value = params.value
+          if (typeof value !== 'string' || !isPermissionValue(value, option.options)) {
+            throw invalidParams(`invalid value for ${PERMISSIONS_CONFIG_ID}: ${String(value)}`)
+          }
+          service.set(record.agent.session, value)
+        } else {
           throw invalidParams(`unknown config option: ${params.configId}`)
         }
-        const value = params.value
-        if (typeof value !== 'string' || !isEffortValue(value, record.efforts)) {
-          throw invalidParams(`invalid value for ${THOUGHT_LEVEL_CONFIG_ID}: ${String(value)}`)
-        }
-        const current = record.selection.current
-        if (current !== undefined) {
-          record.selection.current = { ...current, reasoningEffort: ReasoningEffortId(value) }
-        }
-        return { configOptions: [buildThoughtLevelOption(value, record.efforts)] }
+        return { configOptions: sessionConfigOptions(record) }
       },
     }
   }

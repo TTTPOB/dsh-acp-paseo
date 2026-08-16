@@ -209,10 +209,13 @@ async function main() {
     }
     const thought = (session.configOptions ?? []).find((option) => option.category === 'thought_level')
     if (thought === undefined) fail('session/new did not advertise a thought_level config option')
+    const permission = (session.configOptions ?? []).find((option) => option.category === 'permissions')
+    if (permission === undefined) fail('session/new did not advertise a permissions config option')
     sessionResolved = true
     process.stderr.write(
       `[smoke] session/new ok — models: ${models.availableModels.map((model) => model.modelId).join(', ')}; ` +
-        `current: ${models.currentModelId}; modes: ${modeIds.join(', ')}; thought: ${thought.currentValue}\n`,
+        `current: ${models.currentModelId}; modes: ${modeIds.join(', ')}; thought: ${thought.currentValue}; ` +
+        `permission: ${permission.currentValue}\n`,
     )
 
     await withTimeout(new Promise((resolve) => setTimeout(resolve, 1_500)), 5_000, 'commands window')
@@ -247,6 +250,37 @@ async function main() {
     const updated = (configResponse.configOptions ?? []).find((option) => option.category === 'thought_level')
     if (updated?.currentValue !== 'high') fail(`thought_level did not stick: ${JSON.stringify(updated)}`)
     process.stderr.write('[smoke] thought level ok (high)\n')
+
+    // Switch to a different switchable preset (never the derived `custom`),
+    // then restore — the smoke session must not leak its permission state.
+    const switchable = (permission.options ?? []).filter((option) => option.value !== 'custom')
+    if (switchable.length < 2) {
+      fail(`permissions selector has no switchable presets: ${JSON.stringify(permission.options)}`)
+    }
+    const target = switchable.find((option) => option.value !== permission.currentValue) ?? switchable[0]
+    const permResponse = await withTimeout(
+      connection.setSessionConfigOption({
+        sessionId: session.sessionId,
+        configId: 'permissions',
+        value: target.value,
+      }),
+      30_000,
+      'set_config_option permissions',
+    )
+    const permUpdated = (permResponse.configOptions ?? []).find((option) => option.category === 'permissions')
+    if (permUpdated?.currentValue !== target.value) {
+      fail(`permissions did not stick: ${JSON.stringify(permUpdated)}`)
+    }
+    await withTimeout(
+      connection.setSessionConfigOption({
+        sessionId: session.sessionId,
+        configId: 'permissions',
+        value: permission.currentValue,
+      }),
+      30_000,
+      'set_config_option permissions restore',
+    )
+    process.stderr.write(`[smoke] permission preset ok (${target.value} → ${permission.currentValue})\n`)
 
     const commandTurn = await withTimeout(
       connection.prompt({

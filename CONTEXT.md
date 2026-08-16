@@ -36,6 +36,10 @@ _Avoid_: model list
 思考强度选择器（off/high/max），作为 ACP configOption（category `thought_level`）暴露，落到 dsh 的 `reasoningEffort`。
 _Avoid_: thinking mode
 
+**Permission Option**:
+权限预设选择器（workspace-write / danger-full-access），作为 ACP configOption（category `permissions`）暴露，落到 dsh 的 `ctx.permissionPresets`；`custom` 是派生态，只显示不可切换，无预设服务时桥不暴露该选项。
+_Avoid_: permission mode（它是策略选择器，不是协作姿态）
+
 **Command Passthrough**:
 桥对 prompt 的拦截规则：恰好一个 text block 且以 `/` 开头时，交给 dsh 命令注册表（`ctx.commands.execute`）执行，不进模型；其余一律普通消息。
 _Avoid_: slash interception

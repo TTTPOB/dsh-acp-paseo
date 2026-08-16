@@ -255,6 +255,41 @@ export function isEffortValue(value: string, efforts: readonly DshEffortInfo[]):
   return efforts.some((effort) => effort.id === value);
 }
 
+/** Config option identity for the permission-preset selector. */
+export const PERMISSIONS_CONFIG_ID = 'permissions';
+export const PERMISSIONS_CATEGORY = 'permissions';
+
+/**
+ * The derived not-a-preset state of dsh permission presets: shown as the
+ * current value when the effective knobs match no table entry, never a
+ * switch target.
+ */
+export const CUSTOM_PRESET_VALUE = 'custom';
+
+/** Build the permissions select config option for the session state. */
+export function buildPermissionOption(
+  currentValue: string,
+  options: readonly AcpSelectOption[],
+): AcpSelectConfigOption {
+  return {
+    type: 'select',
+    id: PERMISSIONS_CONFIG_ID,
+    name: 'Permissions',
+    category: PERMISSIONS_CATEGORY,
+    description: 'Sandbox mode and approval policy preset',
+    currentValue,
+    options: [...options],
+  };
+}
+
+/**
+ * Whether a value is a legal permission switch target: an advertised preset
+ * other than the derived-only {@link CUSTOM_PRESET_VALUE}.
+ */
+export function isPermissionValue(value: string, options: readonly AcpSelectOption[]): boolean {
+  return options.some((option) => option.value === value && option.value !== CUSTOM_PRESET_VALUE);
+}
+
 /**
  * Map dsh command descriptors to ACP available commands, dropping blocklisted
  * names (web-only commands that cannot work over a headless transport).
